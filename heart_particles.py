@@ -271,7 +271,8 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Particle Heart · 粒子爱心")
     clock = pygame.time.Clock()
-    font = pygame.font.SysFont("consolas", 15)
+    # 使用内置默认字体：避免 pygame 2.6.1 在 Python 3.13 上 SysFont 扫描系统字体时的崩溃 bug
+    font = pygame.font.Font(None, 22)
 
     # 拖尾层：每帧覆盖一层半透明黑，旧画面渐渐变暗 → 梦幻拖尾
     fade = pygame.Surface((WIDTH, HEIGHT))
