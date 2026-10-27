@@ -55,13 +55,14 @@ HEART_CENTER      = (WIDTH * 0.5, HEIGHT * 0.5 - 10)
 ROTATE_SPEED      = 0.45                 # 绕 Y 轴旋转速度（弧度/秒）
 BREATH_SPEED      = 1.4                  # 呼吸速度（弧度/秒）
 BREATH_DEPTH      = 0.07                 # 呼吸幅度
-JITTER_AMP        = 1.5                  # 个体抖动幅度（像素）
+JITTER_AMP        = 0.8                  # 个体抖动幅度（像素，降低避免中心过曝堆积）
 FOCAL             = 900.0                # 透视焦距：越小透视越夸张
 
 HUE_MIN, HUE_MAX  = 0.80, 1.00           # 色相区间（粉紫系）
 SAT_LEVELS        = (0.30, 0.55, 0.80, 1.0)
 SIZE_CHOICES      = (3, 4, 5)            # 粒子核心半径档位
-TRAIL_ALPHA       = 34                   # 拖尾强度
+TRAIL_ALPHA       = 60                   # 拖尾强度（越大残影消散越快，越不刺眼）
+PARTICLE_BRIGHT   = 0.55                 # 粒子亮度系数：整体压暗，柔和护眼
 
 # 深度分层：按 z 范围划分 N 档，每档预渲染不同尺寸/亮度的光晕贴图
 DEPTH_LAYERS      = 12
@@ -113,14 +114,15 @@ def make_glow(core_r, color, brightness):
     gr = max(2, int(core_r * 3.2))
     surf = pygame.Surface((gr * 2, gr * 2), pygame.SRCALPHA)
     cx = cy = gr
-    # 外圈柔和光晕
+    # 外圈柔和光晕（亮度乘护眼系数，避免过曝）
     for r in range(gr, 0, -1):
-        k = (1.0 - r / gr) ** 2 * brightness
-        a = int(255 * k)
+        k = (1.0 - r / gr) ** 2 * brightness * PARTICLE_BRIGHT
+        a = int(255 * min(1.0, k))
         pygame.draw.circle(surf, (color[0], color[1], color[2], a), (cx, cy), r)
-    # 中心白核（高亮）
-    core_col = (min(255, color[0] + 80), min(255, color[1] + 80),
-                min(255, color[2] + 80), 255)
+    # 中心柔和高光（不再加 80 的过曝白核，改弱化高光）
+    core_col = (min(255, int(color[0] * 0.7 + 40)),
+                min(255, int(color[1] * 0.7 + 40)),
+                min(255, int(color[2] * 0.7 + 40)), 255)
     pygame.draw.circle(surf, core_col, (cx, cy), max(1, core_r // 2))
     return surf
 
@@ -139,7 +141,7 @@ def get_glow(core_r, hue, depth_f):
         # 深度越深：粒子越小、越暗（景深模糊 + 深度雾化）
         base_r = SIZE_CHOICES[size_idx]
         size = base_r * (1.35 - 0.75 * depth_f)          # 近大远小
-        bright = 1.0 - 0.62 * depth_f                    # 近亮远暗
+        bright = 1.0 - 0.50 * depth_f                    # 近亮远暗（压低对比，护眼）
         surf = make_glow(int(size), _hsv(hue), bright)
         _glow_cache[key] = surf
     return surf
@@ -215,7 +217,7 @@ def build_background():
     for y in range(HEIGHT):
         for x in range(WIDTH):
             d = math.hypot(x - cx, y - cy) / maxd
-            k = 1.0 - d * 0.55                      # 中心亮、四周暗
+            k = 1.0 - d * 0.28                      # 中心轻微亮、四周暗（更柔和）
             r = int((BG_BOTTOM[0] + (BG_TOP[0] - BG_BOTTOM[0]) * (1 - y / HEIGHT)) * k)
             g = int((BG_BOTTOM[1] + (BG_TOP[1] - BG_BOTTOM[1]) * (1 - y / HEIGHT)) * k)
             b = int((BG_BOTTOM[2] + (BG_TOP[2] - BG_BOTTOM[2]) * (1 - y / HEIGHT)) * k)
