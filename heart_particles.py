@@ -1,33 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-动态粒子爱心 (Particle Heart)
-==============================
-万千炫彩粒子从屏幕底部喷涌而上，以弹簧般的弧线轨迹汇聚成一颗
-持续"呼吸"搏动的爱心。纯黑背景 + 加法混合辉光 + 淡淡拖尾，
-粉 / 浅粉 / 紫 / 淡紫炫彩渐变，梦幻感拉满。
+3D 粒子环绕爱心 (3D Particle Heart)
+====================================
+数千个炫彩粒子分布在一颗**三维爱心**的体积与表面，整颗爱心在空间中
+绕 Y 轴缓缓旋转、呼吸搏动，粒子如星云般环绕流淌。搭配透视投影、
+深度雾化、景深模糊、加法混合辉光与梦幻拖尾，营造高级的粒子环绕视觉。
 
 核心原理
 --------
-1. 爱心形状 —— 经典爱心参数方程（t ∈ [0, 2π)）：
-       x = 16·sin³(t)
-       y = 13·cos(t) − 5·cos(2t) − 2·cos(3t) − cos(4t)
-   轮廓粒子直接取方程值；内部粒子由轮廓点向中心随机收缩得到，
-   从而形成"实心"爱心。
+1. 三维爱心体积 —— 由经典参数方程生成"外壳"，再在壳内随机填充形成体积：
+       x = 16·sin³(t) · cos(s)      (s ∈ [0,2π) 绕 Y 轴旋转)
+       y = 13·cos t − 5·cos 2t − 2·cos 3t − cos 4t
+       z = 16·sin³(t) · sin(s)
+   即：先取 2D 爱心轮廓 (x0, y0)，让 x0 绕 Y 轴旋转一圈得到旋转体（3D 体积）。
 
-2. 粒子物理 —— 每个粒子都被一根"看不见的弹簧"拉向自己的目标点：
-       加速度 a = k · (目标点 − 当前位置)
-       速度   v = (v + a) · 阻尼系数
-   远处全力冲刺（限速封顶）、临近自然减速，加上出生时向上的初速度，
-   轨迹会弯成柔美的喷泉状曲线。
+2. 旋转 + 透视投影 —— 每个粒子绕 Y 轴旋转 angle 角后，用透视投影
+   把 (x,y,z) 映射到屏幕：
+       scale = f / (f + z)          # 近大远小
+       sx = cx + x·scale            # 屏幕坐标
+       sy = cy + y·scale
+   通过 scale 同时控制粒子的大小与亮度 → 天然形成立体景深。
 
-3. 呼吸与抖动 —— 粒子抵达后，目标点随全局呼吸系数同步胀缩：
-       breath = 1 + depth · sin(speed · t)
-   并叠加每个粒子独立相位的正弦微抖动 → 整颗爱心像心跳一样搏动，
-   粒子群如星云般轻轻颤动。
+3. 呼吸 + 个体抖动 —— 整体呼吸系数 breath 让爱心在 3D 里脉动；
+   每个粒子叠加独立相位的正弦抖动，如流动的星云。
 
-4. 发光渲染 —— 预渲染径向渐变光晕贴图，用 BLEND_RGB_ADD（加法混合）
-   绘制：粒子重叠处亮度自动叠加、过曝发白，在纯黑背景上即为辉光；
-   每帧再覆盖一层半透明黑色形成梦幻拖尾。
+4. 高级渲染：
+   - 背景：柔和径向渐变（中心微微发亮）替代死黑；
+   - 粒子：预渲染径向光晕贴图 + 加法混合，近亮远暗，叠加中心白核；
+   - 拖尾：半透明覆盖形成星轨般的残影；
+   - 颜色：随粒子空间位置（z 与旋转角度）在粉/紫光谱间流转。
 
 操作：空格 = 重新绽放    ESC = 退出
 依赖：pip install pygame
@@ -40,52 +41,38 @@ import random
 import pygame
 
 # ============================================================================
-# 一、全局配置（想调效果，改这里就够了）
+# 一、全局配置
 # ============================================================================
-WIDTH, HEIGHT   = 1200, 800              # 窗口尺寸
-FPS             = 60                     # 目标帧率：60 帧保证流畅
-BG_COLOR        = (0, 0, 0)              # 纯黑背景
+WIDTH, HEIGHT     = 1280, 800            # 窗口尺寸
+FPS               = 60                   # 目标帧率
+BG_TOP            = (8, 6, 20)           # 背景渐变：顶部（深蓝紫）
+BG_BOTTOM         = (2, 2, 8)            # 背景渐变：底部（更深）
 
-TOTAL_PARTICLES = 3600                   # 粒子总数：越多爱心越饱满（越吃性能）
-SPAWN_PER_FRAME = 16                     # 每帧从底部生成的粒子数（喷涌节奏）
+TOTAL_PARTICLES   = 5500                 # 粒子总数
+HEART_SCALE       = 16.0                 # 爱心缩放
+HEART_CENTER      = (WIDTH * 0.5, HEIGHT * 0.5 - 10)
 
-HEART_SCALE     = 17.0                   # 爱心缩放系数（决定爱心大小）
-HEART_CENTER    = (WIDTH * 0.5, HEIGHT * 0.5 - 15)   # 爱心中心（屏幕坐标）
+ROTATE_SPEED      = 0.45                 # 绕 Y 轴旋转速度（弧度/秒）
+BREATH_SPEED      = 1.4                  # 呼吸速度（弧度/秒）
+BREATH_DEPTH      = 0.07                 # 呼吸幅度
+JITTER_AMP        = 1.5                  # 个体抖动幅度（像素）
+FOCAL             = 900.0                # 透视焦距：越小透视越夸张
 
-BREATH_SPEED    = 1.6                    # 呼吸速度（弧度/秒）：越大跳得越快
-BREATH_DEPTH    = 0.075                  # 呼吸深度：±7.5% 的缩放幅度
+HUE_MIN, HUE_MAX  = 0.80, 1.00           # 色相区间（粉紫系）
+SAT_LEVELS        = (0.30, 0.55, 0.80, 1.0)
+SIZE_CHOICES      = (3, 4, 5)            # 粒子核心半径档位
+TRAIL_ALPHA       = 34                   # 拖尾强度
 
-RISING_SPRING_K = 0.016                  # 上升阶段：弹簧刚度（a = k·距离）
-RISING_DAMPING  = 0.90                   # 上升阶段：速度阻尼
-MAX_SPEED       = 8.5                    # 上升阶段最大速度（像素/帧）
-ARRIVE_RADIUS   = 7.0                    # 判定"抵达目标"的距离（像素）
-
-HOLD_SPRING_K   = 0.055                  # 抵达后：跟随呼吸目标的弹簧刚度
-HOLD_DAMPING    = 0.80                   # 抵达后：阻尼系数
-JITTER_AMP      = 1.3                    # 抵达后：个体呼吸抖动幅度（像素）
-
-TRAIL_ALPHA     = 42                     # 拖尾强度：每帧覆盖的半透明黑 alpha
-
-# ---- 颜色档位（粉 → 浅粉 → 紫 → 淡紫 的 HSV 区间，量化后便于缓存贴图）----
-HUE_MIN, HUE_MAX = 0.78, 1.00            # 色相：0.78≈紫 → 1.0≈玫红/粉
-HUE_STEPS        = 28                    # 色相量化档数
-SAT_LEVELS       = (0.28, 0.62, 0.92)    # 饱和度：淡紫/浅粉 ↔ 艳粉/艳紫
-SAT_WEIGHTS      = (2, 4, 5)             # 各饱和度档的抽取权重
-
-SIZE_CHOICES     = (2, 3, 4)             # 粒子核心半径档位（像素）
-SIZE_WEIGHTS     = (5, 3, 1)             # 小粒子多一些，层次更丰富
-ALPHA_LEVELS     = (0.18, 0.38, 0.58, 0.78, 1.0)   # 透明度(亮度)档位
+# 深度分层：按 z 范围划分 N 档，每档预渲染不同尺寸/亮度的光晕贴图
+DEPTH_LAYERS      = 12
+_glow_cache       = {}                   # (size_idx, hue_i, depth_i) -> Surface
 
 
 # ============================================================================
-# 二、爱心参数方程与目标点生成
+# 二、三维爱心目标点生成
 # ============================================================================
-def heart_equation(t):
-    """
-    经典爱心参数方程：返回数学坐标系下的 (x, y)（y 轴向上为正）。
-        x = 16·sin³(t)
-        y = 13·cos(t) − 5·cos(2t) − 2·cos(3t) − cos(4t)
-    """
+def heart_profile(t):
+    """2D 爱心轮廓（y 轴向上为正），作为旋转体的母曲线。"""
     x = 16.0 * math.sin(t) ** 3
     y = (13.0 * math.cos(t)
          - 5.0 * math.cos(2.0 * t)
@@ -94,238 +81,205 @@ def heart_equation(t):
     return x, y
 
 
-def random_heart_target():
+def random_heart_point():
     """
-    在爱心区域内随机取一个目标点（返回相对爱心中点的偏移，已乘缩放）。
-    约 42% 的粒子落在轮廓上（depth = 1），勾勒清晰边缘；
-    其余按 depth^0.55 分布在内部（越靠边越密），形成实心效果。
+    在三维爱心体积内随机取一点（相对爱心中点）。
+    用 2D 轮廓绕 Y 轴旋转生成旋转体；约 30% 落在外壳上，其余按 depth^0.5
+    向中心收缩形成体积（越靠表面越密）。返回世界坐标 (x, y, z)。
     """
-    t = random.uniform(0.0, math.tau)
-    hx, hy = heart_equation(t)
-    depth = 1.0 if random.random() < 0.42 else random.random() ** 0.55
-    # 参数方程 y 轴向上为正，而 Pygame 屏幕 y 轴向下为正，取负翻转，使爱心"尖头朝下、圆顶朝上"
-    return hx * HEART_SCALE * depth, -hy * HEART_SCALE * depth
+    t = random.uniform(0.0, math.tau)          # 轮廓参数
+    s = random.uniform(0.0, math.tau)          # 绕 Y 轴旋转角
+    x0, y0 = heart_profile(t)
+    depth = 1.0 if random.random() < 0.30 else random.random() ** 0.5
+    # 让轮廓点绕 Y 轴旋转，并乘 depth 向中心收缩 → 3D 体积
+    x = x0 * math.cos(s) * depth
+    z = x0 * math.sin(s) * depth
+    y = y0 * depth
+    return (x * HEART_SCALE,
+            -y * HEART_SCALE,                  # y 翻转：屏幕向下为正
+            z * HEART_SCALE)
 
 
 # ============================================================================
-# 三、颜色与发光贴图（预渲染 + 缓存，避免每帧逐像素计算）
+# 三、颜色与发光贴图（预渲染 + 缓存）
 # ============================================================================
-_glow_cache = {}      # (size, color_key, alpha_idx) -> Surface
-
-
-def random_color_key():
-    """随机抽取一个量化颜色 key = (色相档, 饱和度档)。"""
-    hue_i = random.randrange(HUE_STEPS)
-    sat_i = random.choices(range(len(SAT_LEVELS)), weights=SAT_WEIGHTS)[0]
-    return hue_i, sat_i
-
-
-def key_to_color(color_key):
-    """把量化 key 还原为 RGB 颜色。"""
-    hue_i, sat_i = color_key
-    hue = HUE_MIN + hue_i / (HUE_STEPS - 1) * (HUE_MAX - HUE_MIN)
-    r, g, b = colorsys.hsv_to_rgb(hue, SAT_LEVELS[sat_i], 1.0)
+def _hsv(hue):
+    r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
     return int(r * 255), int(g * 255), int(b * 255)
 
 
-def make_glow_surface(core_radius, color, brightness=1.0):
-    """
-    预渲染一枚"发光粒子"贴图：
-      · 黑底无 alpha，用亮度本身表示发光强度；
-      · 从外向内画多层同心圆，亮度按平方衰减 → 径向辉光；
-      · 最中心叠一枚灰白亮点 → 粒子核心。
-    绘制时配合 BLEND_RGB_ADD 加法混合，粒子重叠处自然过曝发白。
-    """
-    glow_r = core_radius * 4                      # 光晕半径
-    surf = pygame.Surface((glow_r * 2, glow_r * 2))
-    surf.fill((0, 0, 0))
-    center = (glow_r, glow_r)
-    for r in range(glow_r, 0, -1):                # 外圈暗、内圈亮
-        k = (1.0 - r / glow_r) ** 2 * brightness
-        col = (min(255, int(color[0] * k)),
-               min(255, int(color[1] * k)),
-               min(255, int(color[2] * k)))
-        pygame.draw.circle(surf, col, center, r)
-    wb = int(55 + 200 * brightness)               # 灰白核心亮点
-    pygame.draw.circle(surf, (wb, wb, wb), center, max(1, core_radius // 2))
+def make_glow(core_r, color, brightness):
+    """预渲染一枚径向渐变光晕贴图（带 alpha，供加法混合）。"""
+    gr = max(2, int(core_r * 3.2))
+    surf = pygame.Surface((gr * 2, gr * 2), pygame.SRCALPHA)
+    cx = cy = gr
+    # 外圈柔和光晕
+    for r in range(gr, 0, -1):
+        k = (1.0 - r / gr) ** 2 * brightness
+        a = int(255 * k)
+        pygame.draw.circle(surf, (color[0], color[1], color[2], a), (cx, cy), r)
+    # 中心白核（高亮）
+    core_col = (min(255, color[0] + 80), min(255, color[1] + 80),
+                min(255, color[2] + 80), 255)
+    pygame.draw.circle(surf, core_col, (cx, cy), max(1, core_r // 2))
     return surf
 
 
-def get_glow_layers(core_radius, color_key):
-    """取（带缓存）同一颜色的 5 档透明度发光贴图，供粒子淡入与透明度使用。"""
-    layers = []
-    for ai in range(len(ALPHA_LEVELS)):
-        key = (core_radius, color_key, ai)
-        surf = _glow_cache.get(key)
-        if surf is None:
-            surf = make_glow_surface(core_radius, key_to_color(color_key),
-                                     ALPHA_LEVELS[ai]).convert()
-            _glow_cache[key] = surf
-        layers.append(surf)
-    return tuple(layers)
+def get_glow(core_r, hue, depth_f):
+    """
+    按 (尺寸档, 色相档, 深度档) 取缓存光晕贴图。
+    depth_f ∈ [0,1]，0=最近(大而亮)，1=最远(小而暗)。
+    """
+    size_idx = min(len(SIZE_CHOICES) - 1, core_r)
+    hue_i = int(hue * 20) % 20
+    d_i = min(DEPTH_LAYERS - 1, int(depth_f * DEPTH_LAYERS))
+    key = (size_idx, hue_i, d_i)
+    surf = _glow_cache.get(key)
+    if surf is None:
+        # 深度越深：粒子越小、越暗（景深模糊 + 深度雾化）
+        base_r = SIZE_CHOICES[size_idx]
+        size = base_r * (1.35 - 0.75 * depth_f)          # 近大远小
+        bright = 1.0 - 0.62 * depth_f                    # 近亮远暗
+        surf = make_glow(int(size), _hsv(hue), bright)
+        _glow_cache[key] = surf
+    return surf
 
 
 # ============================================================================
-# 四、粒子类：上升汇聚 → 抵达 → 随爱心呼吸抖动
+# 四、粒子类（3D 空间 + 投影渲染）
 # ============================================================================
 class Particle:
-    """
-    单个粒子。
-    属性：位置(x,y)、速度(vx,vy)、加速度(ax,ay)、颜色(glow_layers)、
-          大小(size)、透明度(alpha)、目标偏移(rx,ry)、相位(phase)等。
-    物理步长按"帧"设计，配合 FPS=60 锁定，保证节奏稳定。
-    """
-    __slots__ = ("x", "y", "vx", "vy", "ax", "ay", "rx", "ry", "size",
-                 "phase", "arrived", "life", "alpha", "alpha_target",
-                 "glow_layers")
+    __slots__ = ("wx", "wy", "wz", "hue", "size", "phase",
+                 "life", "fade")
 
-    def __init__(self, rx, ry, size, color_key):
-        self.rx, self.ry = rx, ry                 # 相对爱心中点的目标偏移
-        self.size = size                          # 粒子大小（核心半径）
-        self.glow_layers = get_glow_layers(size, color_key)   # 颜色/发光贴图
-        # 出生点：屏幕底部之下的随机横向位置
-        self.x = random.uniform(0, WIDTH)
-        self.y = HEIGHT + random.uniform(20, 160)
-        # 初速度：向上为主 + 随机水平扰动 → 弯曲的喷泉轨迹
-        self.vx = random.uniform(-2.2, 2.2)
-        self.vy = random.uniform(-5.5, -1.0)
-        self.ax = self.ay = 0.0                   # 加速度（每帧重算）
-        self.phase = random.uniform(0, math.tau)  # 个体抖动/湍流相位
-        self.arrived = False                      # 是否已抵达爱心目标点
-        self.life = 0.0                           # 存活时间（秒）
-        # 透明度：出生时较暗，逐渐淡入到随机目标值（层次感）
-        self.alpha = ALPHA_LEVELS[0]
-        self.alpha_target = random.uniform(0.55, 1.0)
+    def __init__(self, wx, wy, wz, hue, size, phase):
+        self.wx, self.wy, self.wz = wx, wy, wz   # 世界坐标（相对爱心中点）
+        self.hue = hue                           # 色相（粉紫光谱）
+        self.size = size                         # 粒子尺寸档
+        self.phase = phase                       # 抖动/呼吸相位
+        self.life = random.uniform(0.0, 3.0)     # 环绕流动的随机相位
+        self.fade = 0.0                          # 淡入进度 0→1
 
-    # ---- 状态更新 ----------------------------------------------------------
-    def update(self, dt, breath, cx, cy, t):
+    def update(self, dt):
         self.life += dt
-        if self.arrived:
-            # ★ 已抵达：目标点 = 呼吸缩放后的爱心位置 + 个体正弦抖动
-            tx = cx + self.rx * breath + math.sin(t * 3.1 + self.phase) * JITTER_AMP
-            ty = cy + self.ry * breath + math.cos(t * 2.7 + self.phase * 1.7) * JITTER_AMP
-            self.ax = (tx - self.x) * HOLD_SPRING_K     # 弹簧追随呼吸目标
-            self.ay = (ty - self.y) * HOLD_SPRING_K
-            self.vx = (self.vx + self.ax) * HOLD_DAMPING
-            self.vy = (self.vy + self.ay) * HOLD_DAMPING
-        else:
-            # ★ 上升汇聚：被弹簧拉向爱心上的目标点
-            dx = (cx + self.rx) - self.x
-            dy = (cy + self.ry) - self.y
-            self.ax = dx * RISING_SPRING_K
-            self.ay = dy * RISING_SPRING_K
-            # 轻微横向湍流，让上升轨迹更灵动
-            self.ax += math.sin(t * 2.0 + self.phase) * 0.02
-            self.vx = (self.vx + self.ax) * RISING_DAMPING
-            self.vy = (self.vy + self.ay) * RISING_DAMPING
-            # 限速：防止远距冲刺过快破坏美感
-            sp2 = self.vx * self.vx + self.vy * self.vy
-            if sp2 > MAX_SPEED * MAX_SPEED:
-                k = MAX_SPEED / math.sqrt(sp2)
-                self.vx *= k
-                self.vy *= k
-            # 足够接近目标 → 切换为"已抵达"的呼吸状态
-            if dx * dx + dy * dy < ARRIVE_RADIUS * ARRIVE_RADIUS:
-                self.arrived = True
-        # 积分位置
-        self.x += self.vx
-        self.y += self.vy
-        # 透明度淡入
-        self.alpha += (self.alpha_target - self.alpha) * 0.025
+        self.fade = min(1.0, self.fade + dt * 0.9)   # 淡入
 
-    # ---- 绘制 ----------------------------------------------------------------
-    def draw(self, screen):
-        # 按当前透明度挑选最接近的亮度档位贴图（加法混合 = 发光）
-        a = self.alpha
-        if a < 0.28:
-            idx = 0
-        elif a < 0.48:
-            idx = 1
-        elif a < 0.68:
-            idx = 2
-        elif a < 0.89:
-            idx = 3
-        else:
-            idx = 4
-        g = self.glow_layers[idx]
-        screen.blit(g, (int(self.x - g.get_width() // 2),
-                        int(self.y - g.get_height() // 2)),
-                    special_flags=pygame.BLEND_RGB_ADD)
+    def draw(self, screen, cx, cy, angle, breath, t):
+        # ---- 绕 Y 轴旋转 ----
+        c = math.cos(angle)
+        s = math.sin(angle)
+        x = self.wx * c + self.wz * s
+        z = -self.wx * s + self.wz * c
+        # ---- 呼吸缩放 ----
+        br = breath
+        x *= br
+        z *= br
+        y = self.wy * br
+        # ---- 个体抖动（沿各轴正弦微抖，如流动星云）----
+        j = JITTER_AMP
+        x += math.sin(t * 2.1 + self.phase) * j
+        y += math.cos(t * 2.4 + self.phase * 1.3) * j
+        z += math.sin(t * 1.7 + self.phase * 0.7) * j * 2.0
+        # ---- 透视投影 ----
+        persp = FOCAL / (FOCAL + z)                  # 近大远小
+        sx = cx + x * persp
+        sy = cy + y * persp
+        # 深度因子：z 越大越远（0 近 → 1 远）
+        depth_f = max(0.0, min(1.0, (z + HEART_SCALE * 20) / (HEART_SCALE * 40)))
+        # 色相随旋转角与深度轻微流转
+        hue = (self.hue + angle * 0.06 + z * 0.002) % 1.0
+        glow = get_glow(self.size, hue, depth_f)
+        # 屏幕外剔除
+        if sx < -glow.get_width() or sx > WIDTH + glow.get_width():
+            return
+        if sy < -glow.get_height() or sy > HEIGHT + glow.get_height():
+            return
+        # 加法混合绘制（淡入控制初始透明度）
+        alpha = int(255 * self.fade)
+        if alpha > 4:
+            glow.set_alpha(alpha)
+            screen.blit(glow,
+                        (int(sx - glow.get_width() // 2),
+                         int(sy - glow.get_height() // 2)),
+                        special_flags=pygame.BLEND_RGB_ADD)
 
 
 # ============================================================================
-# 五、场景构建与主循环
+# 五、背景与主循环
 # ============================================================================
-def build_particle_specs():
-    """预生成全部粒子的目标点与外观规格，并打乱顺序（涌入过程均匀炫彩）。"""
-    specs = []
-    for _ in range(TOTAL_PARTICLES):
-        rx, ry = random_heart_target()
-        size = random.choices(SIZE_CHOICES, weights=SIZE_WEIGHTS)[0]
-        specs.append((rx, ry, size, random_color_key()))
-    random.shuffle(specs)
-    return specs
+def build_background():
+    """预渲染柔和径向渐变背景（中心微微发亮）。"""
+    bg = pygame.Surface((WIDTH, HEIGHT))
+    cx, cy = WIDTH // 2, HEIGHT // 2
+    maxd = math.hypot(cx, cy)
+    for y in range(HEIGHT):
+        for x in range(WIDTH):
+            d = math.hypot(x - cx, y - cy) / maxd
+            k = 1.0 - d * 0.55                      # 中心亮、四周暗
+            r = int((BG_BOTTOM[0] + (BG_TOP[0] - BG_BOTTOM[0]) * (1 - y / HEIGHT)) * k)
+            g = int((BG_BOTTOM[1] + (BG_TOP[1] - BG_BOTTOM[1]) * (1 - y / HEIGHT)) * k)
+            b = int((BG_BOTTOM[2] + (BG_TOP[2] - BG_BOTTOM[2]) * (1 - y / HEIGHT)) * k)
+            bg.set_at((x, y), (r, g, b))
+    return bg
 
 
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Particle Heart · 粒子爱心")
+    pygame.display.set_caption("3D Particle Heart · 粒子环绕爱心")
     clock = pygame.time.Clock()
-    # 使用内置默认字体：避免 pygame 2.6.1 在 Python 3.13 上 SysFont 扫描系统字体时的崩溃 bug
-    font = pygame.font.Font(None, 22)
+    font = pygame.font.Font(None, 22)   # 内置字体，规避 pygame2.6+SysFont 崩溃
 
-    # 拖尾层：每帧覆盖一层半透明黑，旧画面渐渐变暗 → 梦幻拖尾
+    background = build_background()
+
+    # 拖尾层：半透明黑覆盖，形成残影
     fade = pygame.Surface((WIDTH, HEIGHT))
-    fade.fill(BG_COLOR)
+    fade.fill((0, 0, 0))
     fade.set_alpha(TRAIL_ALPHA)
 
-    specs = build_particle_specs()
-    pending = specs[:]                            # 待激活（尚未从底部生成）
-    active = []                                   # 已激活粒子
-    screen.fill(BG_COLOR)
+    particles = []
+    for _ in range(TOTAL_PARTICLES):
+        wx, wy, wz = random_heart_point()
+        hue = random.uniform(HUE_MIN, HUE_MAX)
+        size = random.choices(SIZE_CHOICES, weights=(5, 3, 2))[0]
+        phase = random.uniform(0, math.tau)
+        particles.append(Particle(wx, wy, wz, hue, size, phase))
 
-    t = 0.0                                       # 全局时间（秒）
     cx, cy = HEART_CENTER
+    angle = 0.0
+    t = 0.0
     running = True
     while running:
-        dt = min(clock.tick(FPS) / 1000.0, 0.05)  # 锁 60 帧，防卡顿跳变
+        dt = min(clock.tick(FPS) / 1000.0, 0.05)
         t += dt
+        angle += ROTATE_SPEED * dt
 
-        # ---- 事件处理 --------------------------------------------------------
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_SPACE:          # 重新绽放
-                    specs = build_particle_specs()
-                    pending = specs[:]
-                    active = []
-                    screen.fill(BG_COLOR)
+                elif event.key == pygame.K_SPACE:
+                    t = 0.0
+                    for p in particles:
+                        p.fade = 0.0          # 重新淡入绽放
 
-        # ---- 1. 从屏幕底部喷涌出新粒子 ----------------------------------------
-        for _ in range(min(SPAWN_PER_FRAME, len(pending))):
-            active.append(Particle(*pending.pop()))
-
-        # ---- 2. 全局呼吸系数：爱心整体缩放随时间正弦起伏 ------------------------
         breath = 1.0 + BREATH_DEPTH * math.sin(t * BREATH_SPEED)
 
-        # ---- 3. 物理更新 --------------------------------------------------------
-        for p in active:
-            p.update(dt, breath, cx, cy, t)
-
-        # ---- 4. 渲染：先覆盖拖尾层，再加法混合绘制发光粒子 ----------------------
+        # 绘制背景 + 拖尾
+        screen.blit(background, (0, 0))
         screen.blit(fade, (0, 0))
-        for p in active:
-            p.draw(screen)
 
-        # ---- 5. 角落 HUD（帧率 / 粒子数 / 操作提示） -----------------------------
+        # 更新并绘制所有粒子
+        for p in particles:
+            p.update(dt)
+            p.draw(screen, cx, cy, angle, breath, t)
+
         hud = font.render(
-            f"FPS {clock.get_fps():5.1f}   Particles {len(active):5d}   "
+            f"FPS {clock.get_fps():5.1f}   Particles {TOTAL_PARTICLES}   "
             f"SPACE=replay  ESC=quit",
-            True, (95, 95, 115))
+            True, (150, 150, 180))
         screen.blit(hud, (14, 12))
 
         pygame.display.flip()
