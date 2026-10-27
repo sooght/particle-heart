@@ -103,7 +103,8 @@ def random_heart_target():
     t = random.uniform(0.0, math.tau)
     hx, hy = heart_equation(t)
     depth = 1.0 if random.random() < 0.42 else random.random() ** 0.55
-    return hx * HEART_SCALE * depth, hy * HEART_SCALE * depth
+    # 参数方程 y 轴向上为正，而 Pygame 屏幕 y 轴向下为正，取负翻转，使爱心"尖头朝下、圆顶朝上"
+    return hx * HEART_SCALE * depth, -hy * HEART_SCALE * depth
 
 
 # ============================================================================
